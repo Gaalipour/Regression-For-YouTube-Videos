@@ -1,0 +1,501 @@
+---
+title: "Linear Regression Models for Trending YouTube Videos"
+output: html_notebook
+---
+## Ghodratollah Aalipour (ga5481@rit.edu)
+
+
+
+### Description
+YouTube maintains a list of the top trending videos. To determine the year's top-trending videos,
+YouTube uses a combination of factors including measuring users interactions (number of views,
+shares, comments and likes). Our dataset for this project is derived from [1]. 
+
+Our dataset is a daily record of the top trending YouTube videos and includes several months (and
+counting) of data on daily trending YouTube videos. The regions that this dataset covers are the US,
+GB, DE, CA, and FR regions (USA, Great Britain, Germany, Canada, and France, respectively), with up
+to 200 listed trending videos per day. Each region's data is in a separate file. We focus on the file for
+the United States. Kaggle collected this data through YouTube API. 
+
+The data includes several features such as the video title, trending_date, channel title, publish time, tags, views, likes and dislikes, description, and comment count with 23363 observations. The variables likes, dislikes, comment counts are the only continuous variables. There exist text data and time-series data as well.
+
+### Goal
+In this project we aim to relate the number of views to other numeric variables through a linear
+regression model and perform statistically analysis techniques that we learned in the course. This includes identifying the factors that have most influence on the model. We start with loading the data and preprocess it to handle missing values etc. First, we include all the packages the we need for this project. 
+
+### Required Libraries
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(corrplot)
+library(lubridate)
+
+```
+
+As we pointed out, the data is given in [1]. But we download it and save it to the disk. 
+
+
+### Loading the Data
+```{r}
+us_videos <- read.csv("USvideos.csv")
+us_videos
+```
+## Data Preprocessing 
+
+We start with some initial data processing. We do not need all features of the data. To occupy less memory,  we drop  unnecessary columns. 
+
+### Dropping Unfavorable Columns
+
+We drop the following columns: "video_id", "trending_date",  "views", "likes", "dislikes", "comment_count", "category_id", "publish_time","channel_title", and "title". 
+
+```{r}
+favor_cols <- c("video_id", "trending_date",  "views", "likes", "dislikes", "comment_count", 
+                "category_id", "publish_time","channel_title", "title")
+
+us_videos <- us_videos[ , favor_cols] 
+us_videos$category_id <- as.factor(us_videos$category_id)
+us_videos
+```
+
+### Standard Date Format for Trending_date and Publish_time
+
+We turning the data type for trending_date and publish_time from factor into a standard date format.
+ 
+
+```{r}
+us_videos$trending_date <- ydm(us_videos$trending_date)
+us_videos$publish_time <- ymd(substr(us_videos$publish_time,start = 1,stop = 10))
+us_videos
+```
+
+
+### Any Missing value?
+As the code block below shows, there is no missing value in our data.
+
+```{r}
+sum(is.na(us_videos))
+```
+
+
+
+### Understanding  Our Data Better 
+
+__Question: Do we have exactly one observation per video? __
+
+The videos are determined by their ID's. So, we count the number of different ID's 
+as a factor variable. If this number matchs with the total number of observations, then we have exactly one instance per video. 
+
+```{r}
+length(levels(as.factor(us_videos$video_id)))
+```
+
+Hence, we only have $4,712$  videos but the number of observations is $23,362$. So we have redundant information for a 
+single video. For instance, for a video whose ID is "2kyS6SvSYSE", we take a look to see what information can be captured form this video. 
+
+```{r}
+us_videos[us_videos$video_id == "2kyS6SvSYSE",]
+```
+
+As it can be seen from this query, for this video id we have $7$ observations. After a careful look at the data, we realize that each is per trending day. This video has been in trending for seven days from November 14, 2011 to November 20, 2011. It was published in November 13. Thus, each video has appeared in the observations as many days as it has been trending. 
+
+We can use the group_by method of "dplyer" library of R to group the data observations by their video_id.
+ 
+
+```{r}
+arrange(us_videos, video_id, desc(trending_date))
+```
+
+### How is the Data Collected?
+
+Are the counts for views, likes, dislikes and comment_count computed cumulatively or are they resenting the values for each day. Unfortunately, I did not find any information in the data source regarding this issue. I assume that they are calculated cumulatively as per watch a video in the YouTube, the number of views increases by one.  
+
+
+### Removing History for Trend
+
+We extract actual numeric values by aggregating over the history for each video so that we have exactly one data instance for each video. We call the new dataset by "num_feature".
+
+
+```{r}
+num_feature<- us_videos %>% group_by(video_id) %>%   
+  summarize(
+                        views = sum(views), likes = max(likes), 
+                        dislikes = max(dislikes), comment_count = max(comment_count)
+                        ) 
+num_feature
+```
+
+### Boxplot for Views Based on the Category ID
+
+We plot the mean, median and variance of views per category_id. Unfortunately, there are extreme outliers and they do not allow see the details well in the plot.
+ 
+
+```{r}
+us_videos %>% group_by(category_id) %>%   
+  summarize(mean_views = mean(views), sd_views = sd(views)) 
+
+```
+
+
+```{r}
+categ_data <- us_videos %>% group_by(video_id, category_id) %>%   
+  summarize(
+                        views = sum(views), likes = max(likes), 
+                        dislikes = max(dislikes), comment_count = max(comment_count)
+                        ) 
+p <- ggplot(categ_data, aes(x=category_id, y=views, color = category_id) )+ geom_boxplot(outlier.colour="black", outlier.shape=16,
+             outlier.size=2, notch=FALSE) + coord_flip()
+p
+```
+
+
+### Modelling The Data 
+We start with the full model, which include all variables. 
+
+```{r}
+view_full <- lm(views ~ likes + dislikes + comment_count, data = num_feature)
+summary(view_full)
+```
+
+The p-value of the F-statistic is less than $2.2*10^{-16}$ which means that the regression is significant, i.e. the coefficients of at least one the predictors "likes", "dislikes", "comment_count" is non-zero.  
+
+The regression model determined by the least square method on this dataset is
+
+
+$${\bf views} = 1255000 + 161.5 * ({\bf likes}) + 378.9 * ({\bf dislikes}) - 450.4 * ({\bf comment\_count})$$ 
+The adj-$R^2$ is $0.64$ which is not that high. This value could be due to multicollinearity among the predictors. 
+We check for collinearity among the predictors. 
+
+### Correlations Among the New Variables
+
+```{r}
+cor_matrix <- cor(num_feature[, c("views", "likes", "dislikes", "comment_count")])
+corrplot(cor_matrix, method = "number") #order = "hclust"
+```
+
+### Multi-Collinearity
+
+As the correlation matrix shows, there is high collinearity between some variables. For instance, dislikes and comment count have high correlations. This makes sense, because usually when people are angry about a product, they would write a review. Similarly, views and likes have high correlation as well. So likes seems to be a good predictor for the number of views. Moreover, likes and the comment counts have remarkable correlation. Thus, if one of the predictors likes or comment count is  available in the model, the other one might be considered for exclusion from the model. We will examine these dependencies later when we are modelling. 
+
+### Variance Inflation Factors - VIF Score 
+
+We calculate the Variance Inflation Factor (VIF) among the predictor variables.
+
+```{r}
+car::vif(view_full)
+```
+
+The VIF for "comment_count" is begiier that $5$. Since $5 \leq VIF \leq 10$ are considered significant, the predictor "comment_count" would poorly estimate the regression coefficient.  
+
+### Condition Number
+```{r}
+kappa(num_feature[,c("likes", "dislikes", "comment_count")])
+```
+
+## Dropping the comment_count from the Full Model
+
+We start reducing our model by dropping the predictor whose VIF is high. Thus, we drop the "comment_count" from our full model. Then, we evaluate the reduced model for its VIF.
+
+
+```{r}
+view_like_dislike <- lm(views ~ likes + dislikes, data = num_feature)
+car::vif(view_like_dislike)
+```
+
+### VIF For the New Reduced Model
+As it is clear from the new VIF's for the new model, each of new "likes" and "dislikes" have a good VIF. So, we prefer the reduced model over the full model.  
+
+### How About the adj-$R^2$ for the reduced Model? 
+Though, we do not see any significant VIF, we should compare the performance of the reduced model with the full model in terms of the adj-$R^2$.
+
+
+```{r}
+summary(view_like_dislike)
+```
+The regression model induced by these predictors is 
+
+$$views = 1272000 + 119.9 * (likes) + 132.1* (dislikes)$$
+The adj-$R^2$ for the new model is $0.59$ but for the full model is $0.64$. So, we are missing some amount of accuracy. If there was no loss on the accuracy, then the reduced model is preferred over the full model. But with this loss, we may need to check other model candidates by reducing the model even further. 
+
+
+### Regression Relating Views to Likes
+
+
+```{r}
+view_like <- lm(views ~ likes, data = num_feature)
+summary(view_like)
+```
+
+Thus, the linear regression model between "views" and "likes" is determined by $views = 1016000 + 135*(likes)$. As the p-value for the F-statistic show, the regression is __significant__. The adj-$R^2$ for this third model is $0.57$ which is lower than the adj-$R^2$ for the second model and the first model. 
+
+### Confidence and Prediction Intervals
+We take a look at the confidence intervals and prediction intervals.
+
+
+```{r}
+temp_predic <- predict(view_like, interval="prediction")
+new_df <- cbind(num_feature, temp_predic)
+ggplot(new_df, aes(likes, views))+
+geom_point() +
+geom_line(aes(y=lwr), color = "red", linetype = "dashed")+
+geom_line(aes(y=upr), color = "red", linetype = "dashed")+
+geom_smooth(method=lm, se=TRUE)
+```
+
+## What Model to Select? 
+
+We summarize our models in the table below: 
+
+![Three Linear Regression Models](Results_table.png) 
+
+As it is clear from the table, by reducing the models we miss some amount of accuracy. From the first model to the second model, we lose about $4\%$ of accuracy. But the tradeoff is that we won't have the collinearity in this model. 
+The last model has only one predictor and has less accuracy in terms of adj-$R^2$. So the best model could be the second model. 
+
+
+
+
+## Scatter Plot for Data
+
+
+### Views vs Likes
+
+```{r}
+ggplot(num_feature, aes(x = likes, y = views)) + geom_point()
+```
+
+
+### Views vs Dislikes
+```{r}
+ggplot(num_feature, aes(x = dislikes, y = views)) + geom_point()
+```
+
+
+
+### Views vs Comment Count
+```{r}
+ggplot(num_feature, aes(y = views, x = comment_count)) + geom_point()
+```
+
+### Building Linear Models Relating Other Predictors 
+As we realized through the correlation matrix, there seems to be linear relation between views and likes and another linear relation between dislikes and comment_count. We investigate each of these single variable linear relations through applying least square linear regression models and check for the __significance of regression__. 
+
+
+
+
+### Regression Relating Comment Count to Dislikes
+
+```{r}
+dislike_comment <- lm(comment_count ~ dislikes, data = num_feature)
+summary(dislike_comment)
+```
+
+Thus, our linear regression model between "comment_count" and "dislikes" is determined by $comment\_count = 3199 + 0.713(dislikes)$. As the p-value for the F-statistic is too low, the regression is __significant__.
+
+```{r}
+temp_predic <- predict(dislike_comment, interval="prediction")
+new_df <- cbind(num_feature, temp_predic)
+ggplot(new_df, aes(x = dislikes, y = comment_count))+
+geom_point() +
+geom_line(aes(y=lwr), color = "red", linetype = "dashed")+
+geom_line(aes(y=upr), color = "red", linetype = "dashed")+
+geom_smooth(method=lm, se=TRUE)
+```
+```{r}
+anova(dislike_comment)
+```
+
+
+
+### Catching Influential Data Points 
+
+The plots above show that there are some extreme outliners in our dataset. The influential data points adversely impact on our regression models and can favor some regression coefficients. To address this problem, we should find such point. We start with the leverage points:
+
+#### Leverage Points
+The following indices show that the corresponding data points are leverage points.
+
+```{r}
+p = 2
+n = 4712
+inflc = influence(view_full)
+inflc$hat[inflc$hat>2*p/n]
+```
+
+### Cook Distance
+To determine which leverage points are actual influential points, we apply the Cook distance. 
+
+```{r}
+cookdis <- cooks.distance(view_full)
+cookdis[cookdis>1]
+```
+
+Thus, the data points with indices below are influential:
+
+\[\text{Influential  Point Indices}: 355, 664, 794, 1732, 3072, 3457, 3907\]
+
+So, it might be better to remove them from our data before any modelling.
+
+```{r}
+new_data <- num_feature[-c(355, 664,794,1732,3072,3457,3907), ]
+new_lm <- lm(views ~ likes + dislikes + comment_count, data = new_data)
+summary(new_lm)
+```
+But the influential point removal would decrease the adj-$R^2$. It is because there are other leverage points that are not 
+influential points and so they are not impacting on the linear model. So in evaluation they adversely impact on the adj-$R^2$.
+
+```{r}
+summary(lm(formula = views ~ likes + dislikes , data = new_data))
+```
+
+
+
+
+
+
+
+
+
+
+## Adding New Handcrafted Features
+It looks like that the current predictors are not able to find a good model relating the number of views to the other variables. So, we design new features that can improve the accuracy of our model. Based on the domain knowledge, we take a careful look at the notion of trending. It sounds like the rate of changes in the views. So, we try to find such a rate. Trending videos should have high rate of changes in the number of views. Since we know the number of trending days, the initial views and the last count for the views, we can approximate this rate as follows:
+
+$$\text{Average Daily Trending} = \frac{\text{(Last_Views_Count) - (First_Views_Count)}}{\text{The Number of Days in Trending}}$$
+We add this value to our data set. 
+
+### Average Daily Views 
+
+```{r}
+options(digits=2)
+new_num_feature<- us_videos %>% group_by(video_id) %>%   
+  summarize(
+                        first_trending_date = min(trending_date), 
+                        tot_views = sum(views), tot_likes = max(likes), 
+                        tot_dislikes = max(dislikes), tot_comment_count = max(comment_count), 
+                        trending_days = length(video_id), 
+                        avg_daily_views = round((max(views)-min(views))/length(video_id))
+                        ) 
+new_num_feature
+```
+
+### View vs Average Daily Views
+```{r}
+ggplot(new_num_feature, aes(y = tot_views, x = avg_daily_views)) + geom_point()
+```
+
+
+
+### Correlations Among the New Variables
+
+```{r}
+cor_matrix <- cor(new_num_feature[, c("tot_views", "tot_likes", "tot_dislikes", "tot_comment_count", "avg_daily_views")])
+corrplot(cor_matrix, method = "number", order = "hclust")
+#method = "circle", order = "hclust")
+```
+
+### Full Extended Model vs Reduced Extended Model
+Just like the previous models, if we let all variables be in the model, the there would be high VIF (~ 7.9) for the comment_counts.
+
+
+```{r}
+car::vif(lm(tot_views ~ tot_likes + tot_dislikes + tot_comment_count + avg_daily_views, data = new_num_feature))
+```
+
+
+So we already removed it and design a reduced models without it.
+
+```{r}
+new_view_lm <- lm(tot_views ~ tot_likes + tot_dislikes +  avg_daily_views, data = new_num_feature)
+summary(new_view_lm)
+```
+
+The adj-$R^2$ is pretty high and much better than the previous models. So, we stick to this model. Moreover, this model has no high VIF.
+```{r}
+car::vif(new_view_lm)
+```
+
+
+### Other Interesting Statistics
+
+We would like to know which categories are the most popular categories. So we simply count them and apply a 
+barplot for the counts.
+
+
+```{r}
+cat_count <- us_videos %>% group_by(category_id) %>%   summarize(count = length(category_id)) 
+ggplot(cat_count,aes(x = category_id, y = count,fill=category_id))+geom_bar(stat="identity")
+```
+
+### How Many Days is Needed for a Video to Be Trending?
+
+You might be interested din the how many days in advance you should upload a video to make it a candidate for trending in a particular day. We answer this question below:
+
+```{r}
+us_videos$days_after_pub <- us_videos$trending_date-us_videos$publish_time
+#us_videos[us_videos$days_after_pub<30,]
+
+ggplot(us_videos[us_videos$days_after_pub<30,],aes(as.factor(days_after_pub),fill=as.factor(days_after_pub)))+geom_bar()+guides(fill="none")+labs(title=" The Number of Days After Publish Day",subtitle="Days")+xlab(NULL)+ylab(NULL)
+
+```
+
+### Conclusion
+
+We worked with an interesting data set for trending YouTube videos. This data set has several features such as the number of counts, the number of views, the number of likes and dislikes, the title of the video, etc. We focused on the continuous features and tried to find a linear model for the number of views in terms of other numeric features. We had three original models whose adj-$R^2$ are not high. So, we started handcrafting new features. The new feature is the average daily views for each video. This new feature could highly contribute to the model. If we know this value for the first two days of trending, we can approximate the number of views after a specific period of time. Having the best set of features in a data analysis problem is the most significant part.  
+
+
+### References
+
+[1] https://www.kaggle.com/datasnaek/youtube-new. 
+
+
+
+
+### Appendix
+The category titles are available here.
+
+```{r}
+cat_title <- c('People & Blogs', 'Comedy', 'News & Politics', 'Entertainment',
+       'Sports', 'Autos & Vehicles', 'Gaming', 'Film & Animation',
+       'Howto & Style', 'Science & Technology', 'Shows', 'Music',
+       'Travel & Events', 'Education', 'Pets & Animals',
+       'Nonprofits & Activism')
+length((cat_title))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
